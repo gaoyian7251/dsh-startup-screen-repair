@@ -277,22 +277,48 @@ function inlinePayload(html) {
 
 console.log('\n[6] 结构化注入行表（row shape）')
 const rows = collect()
-check('注入行数 = 4', rows.length === 4, String(rows.length))
-check('行 1 = style(关键 CSS)', rows[0].kind === 'style' && rows[0].text.includes('dsu-boot'), rows[0].kind)
-check('行 2 = head 内联 script(配置+引导)', rows[1].kind === 'script' && rows[1].placement === 'head', rows[1].kind + '/' + rows[1].placement)
-check('行 3 = html 挂载点', rows[2].kind === 'html' && rows[2].html.includes('id="dsh-startup-root"'), rows[2].kind)
-check('行 4 = script-src 运行时', rows[3].kind === 'script-src' && rows[3].src === '/dsh-startup/splash.js', rows[3].kind + '/' + rows[3].src)
+check('注入行数 = 5', rows.length === 5, String(rows.length))
+check('行 1 = style(完整 splash.css)', rows[0].kind === 'style' && rows[0].text.includes('--dsu-din'), rows[0].kind + '/' + String(rows[0].text.length) + 'B')
+check('行 2 = style(关键 CSS 兜底黑幕)', rows[1].kind === 'style' && rows[1].text.includes('dsu-boot'), rows[1].kind)
+check('行 3 = head 内联 script(配置+引导)', rows[2].kind === 'script' && rows[2].placement === 'head', rows[2].kind + '/' + rows[2].placement)
+check('行 4 = html 挂载点', rows[3].kind === 'html' && rows[3].html.includes('id="dsh-startup-root"'), rows[3].kind)
+check('行 5 = script-src 运行时', rows[4].kind === 'script-src' && rows[4].src === '/dsh-startup/splash.js', rows[4].kind + '/' + rows[4].src)
 check('所有行都是纯 JSON 可序列化（web 渲染 + desktop IPC 共用前提）', (() => {
   try { JSON.parse(JSON.stringify(rows)); return true } catch { return false }
 })())
 check('行内不含 undefined 值', JSON.stringify(rows).includes('undefined') === false || !/(:|\[|,)\s*undefined/.test(JSON.stringify(rows)))
 check('每行 kind 都是已知类型', rows.every((x) => ['global', 'script', 'script-src', 'script-preload', 'style', 'html'].includes(x.kind)))
 
+/* 回归护栏：v1.1.0 把 tapIndex 改写成结构化行时，只搬了 CRITICAL_CSS，
+   整份 splash.css 没搬 → 页面只剩兜底黑幕 + 默认黑字 = 黑底黑字，
+   用户报「看不到任何启动动画」。下面这组断言把「完整样式表必须真的下发」锁死。 */
+console.log('\n[6a] 回归：完整样式表必须真的注入（v1.1.0 漏掉过 → 黑底黑字，全屏看不见）')
+const styleRows = rows.filter((x) => x.kind === 'style')
+const injectedCss = styleRows.map((x) => x.text).join('\n')
+const diskCss = fs.readFileSync(path.join(PLUGIN_ROOT, 'lib', 'splash.css'), 'utf8').trim()
+/* 判别标记必须唯一：splash.css 里也有 .dsu-boot，所以只能用 z-index:2147483000
+   来认出「关键 CSS 兜底」那一行，否则两者会撞成同一行。 */
+const critRow = rows.find((x) => x.kind === 'style' && x.text.includes('z-index:2147483000'))
+check('磁盘上 splash.css 的全部内容都在注入的 style 行里', injectedCss.includes(diskCss))
+check('完整样式表排在关键 CSS 之前（沿用原版层叠顺序）', (() => {
+  const full = rows.findIndex((x) => x.kind === 'style' && x.text.includes('--dsu-din'))
+  const crit = rows.findIndex((x) => x.kind === 'style' && x.text.includes('z-index:2147483000'))
+  return full !== -1 && crit !== -1 && full < crit
+})())
+check('关键 CSS 只有一行（z-index:2147483000 标记唯一）', styleRows.filter((x) => x.text.includes('z-index:2147483000')).length === 1)
+check('注入的样式体积 > 20KB（只有关键 CSS 时约 140B，量级即可识别）', injectedCss.length > 20000, String(injectedCss.length))
+check('style 行含动画关键帧（证明不是空壳样式）', injectedCss.includes('@keyframes'))
+check('关键 CSS 自身不含 --dsu-din（证明单靠它动画根本不可见）', critRow !== undefined && !critRow.text.includes('--dsu-din'))
+check('style 行不含 </style（renderer 对 style 行不转义，含了会截断 head）', !/<\/style/i.test(injectedCss))
+check('style 行不含 <!--（同上，注释会提前闭合）', !injectedCss.includes('<!--'))
+
 console.log('\n[6b] web 通道：服务端渲染进 index.html（源: ' + REAL_INDEX.path + '）')
 const before = REAL_INDEX.html
 const after = renderIndexInjections(before, collect())
-check('关键 CSS 落在 <head> 内', after.indexOf('dsu-boot') > after.toLowerCase().indexOf('<head'), String(after.indexOf('dsu-boot')))
-check('关键 CSS 早于应用入口模块', after.indexOf('dsu-boot') < after.indexOf('type="module"'))
+check('完整样式表落在 <head> 内', after.indexOf('--dsu-din') > after.toLowerCase().indexOf('<head') && after.indexOf('--dsu-din') !== -1)
+check('完整样式表早于应用入口模块（不 FOUC）', after.indexOf('--dsu-din') < after.indexOf('type="module"'))
+check('关键 CSS 落在 <head> 内', after.indexOf('z-index:2147483000') > after.toLowerCase().indexOf('<head'), String(after.indexOf('z-index:2147483000')))
+check('关键 CSS 早于应用入口模块', after.indexOf('z-index:2147483000') < after.indexOf('type="module"'))
 check('配置 + 引导脚本落在 <head> 内且早于应用入口', after.indexOf('window.__DSH_STARTUP__=') < after.indexOf('type="module"') && after.indexOf('window.__DSH_STARTUP__=') > 0)
 check('注入了挂载点 div', after.includes('<div id="dsh-startup-root" class="dsu-root dsu-boot">'))
 check('注入了运行时 <script src>', after.includes('<script src="/dsh-startup/splash.js"></script>'))
@@ -304,8 +330,9 @@ check('内联载荷里没有裸的 < （防 </script> 提前闭合）', !inlineP
 
 console.log('\n[6c] desktop 通道：同表经 IPC 由页面内解释器应用')
 const applied = applyDesktopRows(collect())
-check('页面侧能应用全部 4 行（无未知 kind）', applied.length === 4, String(applied.length))
+check('页面侧能应用全部 5 行（无未知 kind）', applied.length === 5, String(applied.length))
 check('  含 style 行（首屏黑幕）', applied.some((x) => x.type === 'style' && x.text.includes('dsu-boot')))
+check('  含 style 行（完整样式表，desktop 侧同样落地）', applied.some((x) => x.type === 'style' && x.text.includes('--dsu-din')))
 check('  含内联 script 行（配置+引导）', applied.some((x) => x.type === 'inline-script' && x.text.includes('window.__DSH_STARTUP__=')))
 check('  含 html 行（挂载点）', applied.some((x) => x.type === 'html' && x.html.includes('dsh-startup-root')))
 check('  含 external-script 行（运行时）', applied.some((x) => x.type === 'external-script' && x.src === '/dsh-startup/splash.js'))
@@ -315,7 +342,7 @@ console.log('\n[6d] enabled=false 时完全静默')
 await call('exact /dsh-startup/config', 'POST', JSON.stringify({ patch: { enabled: false } }))
 check('关闭后行表为空（不注入任何东西）', collect().length === 0, String(collect().length))
 await call('exact /dsh-startup/config', 'POST', JSON.stringify({ patch: { enabled: true } }))
-check('重新打开后行表恢复 4 行', collect().length === 4, String(collect().length))
+check('重新打开后行表恢复 5 行', collect().length === 5, String(collect().length))
 
 console.log('\n[6e] 配置在「每次收集时」现读（改完刷新即生效）')
 await call('exact /dsh-startup/config', 'POST', JSON.stringify({ patch: { identity: '实时刷新检查' } }))
@@ -367,7 +394,7 @@ const ctx2 = {
 mod.apply(ctx2)
 check('独立 ctx 上注册了 4 条路由', ROUTES2.size === 4, String(ROUTES2.size))
 check('独立 ctx 上订阅了 1 个 index-inject', HANDLERS2.length === 1, String(HANDLERS2.length))
-check('清理前有注入行', (() => { const t = []; HANDLERS2.forEach((h) => h(t)); return t.length === 4 })())
+check('清理前有注入行', (() => { const t = []; HANDLERS2.forEach((h) => h(t)); return t.length === 5 })())
 cleanup()
 check('dispose 清掉了路由', ROUTES2.size === 0, String(ROUTES2.size))
 check('dispose 清掉了 index-inject 订阅', HANDLERS2.length === 0, String(HANDLERS2.length))
@@ -377,7 +404,7 @@ check('dispose 后不再注入', (() => { const t = []; HANDLERS2.forEach((h) =>
 let nonArraySafe = true
 try { for (const h of INJECT_HANDLERS) h(undefined) } catch { nonArraySafe = false }
 check('宿主误传非数组表时不抛异常（防御性判断）', nonArraySafe)
-check('误传非数组后正常收集仍返回 4 行', collect().length === 4, String(collect().length))
+check('误传非数组后正常收集仍返回 5 行', collect().length === 5, String(collect().length))
 
 fs.rmSync(SMOKE_HOME, { recursive: true, force: true })
 console.log('\n============================')

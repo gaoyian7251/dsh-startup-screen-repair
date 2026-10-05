@@ -109,10 +109,11 @@ tapIndex 是服务端渲染路径上的钩子，自然一次都不会被调用 �
 渲染进 index.html 文本，桌面端由 Host 经 IPC 把同一张表交给页面侧解释器执行。
 一份行表，两个渲染器，所以两端都能覆盖。
 
-### 本插件下发的四行
+### 本插件下发的五行
 
 ```js
-[ { kind: 'style',      text: CRITICAL_CSS },                    // 黑幕，必须最先生效
+[ { kind: 'style',      text: splashCss },                       // 完整样式表，没有它动画不可见
+  { kind: 'style',      text: CRITICAL_CSS },                    // 黑幕，必须最先生效
   { kind: 'script',     placement: 'head',
     text: 'window.__DSH_STARTUP_BASE__=…;window.__DSH_STARTUP__=…;' + BOOTSTRAP_JS },
   { kind: 'html',       placement: 'body',
@@ -122,7 +123,13 @@ tapIndex 是服务端渲染路径上的钩子，自然一次都不会被调用 �
 
 几个刻意的选择：
 
-- **黑幕用 `style` 行而不是外部 CSS 链接。** `style` 行的内容被直接内联在 `<head>` 最前面，
+- **完整样式表也用 `style` 行内联，而不是 `<link rel="stylesheet">`。** 行类型里根本没有
+  「外部样式表」这一种，而 `style` 行在服务端渲染和桌面端解释器里都落成 `<style>`，
+  两端行为完全一致：不多一次往返、不可能 FOUC、也不可能掉出关键路径。
+  > 这一行曾经被漏掉：splash.js 的 DOM 照建，但没有任何样式，而黑幕把根节点刷成纯黑、
+  > 默认文字色也是黑 —— **黑底黑字，屏幕上什么都看不见**。现在 `smoke-host.mjs` 的
+  > `[6a]` 段专门锁死这件事。
+- **黑幕排在完整样式表之后。** 关键 CSS 在后面，层叠上优先级更高，
   一定在应用入口 `<script type="module">` 之前解析完，所以刷新瞬间就是黑的，不会闪一下白底。
 - **配置与兜底用内联 `script` 行。** 内联脚本按文档顺序同步执行，属于首屏关键路径，
   「该不该播」「9 秒兜底」这两个判断必须在应用挂载前就确定。同理 `enabled:false` 时
@@ -137,8 +144,8 @@ tapIndex 是服务端渲染路径上的钩子，自然一次都不会被调用 �
 
 ### 降级与容错
 
-- 四行都带 9 秒无条件兜底：撤掉黑幕、解除滚动锁、标记 `__DSH_STARTUP_FAILED__`。
-- `enabled:false` → 空表；`enabled` 重新打开 → 恢复四行。
+- 五行都带 9 秒无条件兜底：撤掉黑幕、解除滚动锁、标记 `__DSH_STARTUP_FAILED__`。
+- `enabled:false` → 空表；`enabled` 重新打开 → 恢复五行。
 - 客户端半侧注册设置项失败只 `console.warn`，不影响界面。
 - 所有路由都过 `connection.requestRejection` 信任围栏，未授权请求一律 403。
 

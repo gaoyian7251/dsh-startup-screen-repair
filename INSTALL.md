@@ -146,7 +146,7 @@ lib/client.js         设置面板（浏览器半）
 lib/assets/           真声台词 x5 + 终幕欢迎语 + 界面音效 x2
 cordis.patch.yml      bundle 层声明
 preview/index.html    离线预览页
-test/                 三套冒烟测试（195 项断言）
+test/                 三套冒烟测试（207 项断言）
 README.md             完整文档（含「实现原理」）
 AUDIO-FIELDS.md       需要音频的字段清单
 ```
@@ -157,7 +157,7 @@ AUDIO-FIELDS.md       需要音频的字段清单
 
 | 套件 | 断言数 | 覆盖 |
 |---|---|---|
-| `test/smoke-host.mjs` | 82 | 导出形状、四个路由、信任围栏、**注入行形状 + web 渲染 + desktop 解释器双通道**、配置读写与钳制、XSS 转义、生命周期清理 |
+| `test/smoke-host.mjs` | 94 | 导出形状、四个路由、信任围栏、**注入行形状 + web 渲染 + desktop 解释器双通道**、**完整样式表必须下发（回归护栏）**、配置读写与钳制、XSS 转义、生命周期清理 |
 | `test/smoke-splash.mjs` | 72 | 六幕序列、跳过与兜底、音频回落、语音队列不被打断、**BASE 前缀注入与降级** |
 | `test/smoke-client.mjs` | 41 | 设置面板加载、字段渲染、保存/恢复默认、**宿主 API 变动时的降级路径** |
 
