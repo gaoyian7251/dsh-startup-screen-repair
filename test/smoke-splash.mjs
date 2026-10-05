@@ -98,6 +98,7 @@ function lookup(sel) {
 
 /* ── window / document ───────────────────────────────────────────────────── */
 const spoken = []
+const FETCHED = []
 function makeSpeech() {
   return {
     /* 故意混入"老拼接合成"音色：David(男) / Zira(女) / Huihui(女)，
@@ -120,11 +121,12 @@ function makeSpeech() {
   }
 }
 
-function run(withSpeech, cfgOverride) {
+function run(withSpeech, cfgOverride, extras) {
   MARKUP = ''
   MISSED.clear()
   lookupCache.clear()
   spoken.length = 0
+  FETCHED.length = 0
 
   const root = makeEl('div')
   root._cls = 'dsu-root dsu-boot'
@@ -195,12 +197,20 @@ function run(withSpeech, cfgOverride) {
       this.text = t; this.rate = 1; this.pitch = 1; this.volume = 1
     }
   }
+  Object.assign(windowStub, extras || {})
   windowStub.window = windowStub
+
+  /* fetch 桩：记录请求 URL，用来验证素材路径是否走了注入的 BASE 前缀 */
+  function fetchStub(url) {
+    FETCHED.push(String(url))
+    return Promise.resolve({ ok: false, arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)) })
+  }
 
   const sandbox = {
     window: windowStub,
     document: documentStub,
     console,
+    fetch: fetchStub,
     Promise, Object, Array, JSON, String, Number, Math, Date, Error, RegExp, isFinite,
     setTimeout: windowStub.setTimeout,
     clearTimeout: windowStub.clearTimeout,
@@ -316,6 +326,63 @@ console.log('\n[8] 终幕用真声欢迎语（来自 Video Project 3 的 line-6�
   check('预加载包含 line-6', /ensureAsset\('line-6'\)/.test(src))
   check('五步仍然各自挂着真声素材', (src.match(/audio: 'line-/g) || []).length === 5)
   check('总共 6 份人声素材被引用', (src.match(/'line-[1-6]'/g) || []).length >= 6)
+}
+
+console.log('\n[9] 路由前缀走注入的 __DSH_STARTUP_BASE__（web 与 desktop 共用）')
+/* 素材预加载是异步的：这里同步触发一次加载并让它 flush 微任务队列，
+   然后检查实际请求出去的 URL 是否带上了注入的前缀。 */
+async function flush() { for (let i = 0; i < 6; i++) await Promise.resolve() }
+
+r = run(true)
+api = r.windowStub.__DSH_STARTUP_API__
+await flush()
+check('未注入前缀时回落到 /dsh-startup', FETCHED.every((u) => u.startsWith('/dsh-startup/asset/')), FETCHED.slice(0, 3).join(', ') || '(无请求)')
+check('确实去拉了真声素材 line-1', FETCHED.some((u) => u.includes('line-1.mp3')), FETCHED.slice(0, 3).join(', '))
+
+r = run(true, null, { __DSH_STARTUP_BASE__: '/custom-base' })
+await flush()
+check('注入自定义前缀后素材请求跟着走 /custom-base', FETCHED.length > 0 && FETCHED.every((u) => u.startsWith('/custom-base/asset/')), FETCHED.slice(0, 3).join(', ') || '(无请求)')
+check('不再出现硬编码的 /dsh-startup', !FETCHED.some((u) => u.includes('/dsh-startup/')), FETCHED.slice(0, 3).join(', '))
+
+/* 前缀末尾的冗余斜杠必须被规整，否则会拼出 //asset/ */
+r = run(true, null, { __DSH_STARTUP_BASE__: '/trailing///' })
+await flush()
+check('末尾斜杠被去掉，不拼出 //asset', FETCHED.length > 0 && FETCHED.every((u) => u.startsWith('/trailing/asset/')), FETCHED.slice(0, 2).join(', ') || '(无请求)')
+
+/* 非字符串前缀（宿主没注入 / 被改坏）也要能退回默认，不许拼出 'undefined/asset/' */
+r = run(true, null, { __DSH_STARTUP_BASE__: 12345 })
+await flush()
+check('非法前缀退回 /dsh-startup，不拼出 undefined', FETCHED.every((u) => u.startsWith('/dsh-startup/asset/')), FETCHED.slice(0, 2).join(', ') || '(无请求)')
+
+/* replay() 重新挂运行时脚本时同样要用注入的前缀 */
+r = run(true, null, { __DSH_STARTUP_BASE__: '/custom-base' })
+api = r.windowStub.__DSH_STARTUP_API__
+api.replay()
+const scriptTag = r.head.children.filter((c) => c.tagName === 'script').pop()
+check('replay() 挂的脚本 src 也走注入前缀', !!scriptTag && String(scriptTag.src).startsWith('/custom-base/splash.js?t='), scriptTag && scriptTag.src)
+check('replay() 带时间戳绕开缓存', !!scriptTag && /\?t=\d+$/.test(String(scriptTag.src)), scriptTag && scriptTag.src)
+
+r = run(true)
+api = r.windowStub.__DSH_STARTUP_API__
+api.replay()
+const scriptTag2 = r.head.children.filter((c) => c.tagName === 'script').pop()
+check('未注入前缀时 replay() 用默认前缀', !!scriptTag2 && String(scriptTag2.src).startsWith('/dsh-startup/splash.js?t='), scriptTag2 && scriptTag2.src)
+
+/* 离线预览页写死的 __DSH_STARTUP_SCRIPT_URL__ 优先级最高（file:// 下不能加查询串） */
+r = run(true, null, { __DSH_STARTUP_SCRIPT_URL__: './preview-splash.js' })
+api = r.windowStub.__DSH_STARTUP_API__
+api.replay()
+const scriptTag3 = r.head.children.filter((c) => c.tagName === 'script').pop()
+check('预览页 __DSH_STARTUP_SCRIPT_URL__ 优先且不加查询串', !!scriptTag3 && scriptTag3.src === './preview-splash.js', scriptTag3 && scriptTag3.src)
+
+console.log('\n[10] desktop 场景：origin 是 dsh-app://app，路径必须是站点根相对')
+{
+  /* 先把注释剥掉再断言：源码注释里本来就写着「绝不拼 location.origin」，
+     直接搜字符串会被自己的注释误伤。 */
+  const raw = fs.readFileSync(BUNDLE, 'utf8')
+  const src = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
+  check('没有用 window.location.origin 拼路径', !/location\.origin/.test(src))
+  check('没有用 location.href 拼路径', !/location\.href\s*\+/.test(src))
 }
 
 console.log('\n============================')

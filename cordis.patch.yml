@@ -1,12 +1,16 @@
-# dsh-startup-screen — DSH bundle patch
+# dsh-startup-screen-repair — DSH bundle patch
 #
 # 把插件的 Host 半侧挂进当前 profile 的配置树；Web 半侧由 dsh.client 声明，
 # 宿主按 package.json 的 dsh.client 自动组装 bundle，这里不用写。
 #
+# 同一份配置对 dsh web 与 dsh desktop 都生效：desktop 也是跑同一个 web
+# 应用，只是 index 注入经 IPC 下发（见 README「实现原理」）。
+#
 # 安装（不手改 profile patch）：
-#   dsh plugin --profile web add dsh-startup-screen
+#   dsh plugin --profile desktop add dsh-startup-screen-repair
+#   dsh plugin --profile web     add dsh-startup-screen-repair
 # 本地开发安装：
-#   dsh plugin --profile web add link:D:\工作区\插件\dsh-startup-screen
+#   dsh plugin --profile desktop add link:R:\Dsh\dbaWorkspace\dsh-startup-screen-repair
 - insert:
-    - id: dsh-startup-screen
-      name: dsh-startup-screen
+    - id: dsh-startup-screen-repair
+      name: dsh-startup-screen-repair

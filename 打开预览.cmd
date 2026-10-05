@@ -12,7 +12,7 @@ if not exist "%PAGE%" (
 )
 
 echo.
-echo   dsh-startup-screen - 启动动画离线预览
+echo   dsh-startup-screen-repair - 启动动画离线预览
 echo   ------------------------------------------------
 echo   预览页: %PAGE%
 echo.

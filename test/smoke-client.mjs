@@ -92,7 +92,7 @@ sandbox.globalThis = sandbox
 vm.createContext(sandbox)
 vm.runInContext(code, sandbox, { filename: 'client.js' })
 check('调用了 ModuleLoader.load', loaded !== null)
-check('注册 id 等于 loader entry 名（否则会报 loaded without registering）', loaded && loaded.id === 'dsh-startup-screen', loaded && loaded.id)
+check('注册 id 等于 loader entry 名（否则会报 loaded without registering）', loaded && loaded.id === 'dsh-startup-screen-repair', loaded && loaded.id)
 check('提供了 factory', loaded && typeof loaded.factory === 'function')
 
 console.log('\n[2] factory 导出形状')
@@ -103,9 +103,9 @@ const requireStub = (name) => {
 const mod = loaded.factory(requireStub)
 check('exports.inject = ["slots"]', Array.isArray(mod.inject) && mod.inject.length === 1 && mod.inject[0] === 'slots', JSON.stringify(mod.inject))
 check('exports.apply 是函数', typeof mod.apply === 'function')
-check('注入了插件样式 <style data-plugin-css>', styleTags.length === 1 && styleTags[0].dataset.pluginCss === 'dsh-startup-screen/main.css', styleTags.length + ' 个')
+check('注入了插件样式 <style data-plugin-css>', styleTags.length === 1 && styleTags[0].dataset.pluginCss === 'dsh-startup-screen-repair/main.css', styleTags.length + ' 个')
 
-console.log('\n[3] ctx.slots 注册 settings.section')
+console.log('\n[3] ctx.slots 注册 settings.section（当前版本形状：slots.inject + slots.register）')
 let registration = null
 const ctx = {
   slots: {
@@ -116,10 +116,27 @@ const ctx = {
 mod.apply(ctx)
 check('注册了 settings.section', registration !== null)
 check('options.name 正确', registration && registration.options.name === 'settings.section', registration && registration.options.name)
-check('options.id = startup-screen', registration && registration.options.id === 'startup-screen', registration && registration.options.id)
+check('options.id = startup-screen-repair', registration && registration.options.id === 'startup-screen-repair', registration && registration.options.id)
 check('options.label = 启动动画（字符串，由注册方本地化）', registration && registration.options.label === '启动动画', registration && registration.options.label)
 check('options.order 是数字', registration && typeof registration.options.order === 'number', registration && registration.options.order)
 check('render 是函数', registration && typeof registration.render === 'function')
+
+console.log('\n[3b] 降级路径：不因宿主 API 变动而崩')
+let reg2 = null
+mod.apply({ slots: { register(o, r) { reg2 = { o, r }; return { dispose() {} } } } })
+check('只有 register、没有 inject 时也能注册', reg2 !== null, String(reg2 !== null))
+
+let threw = false
+try { mod.apply({}) } catch { threw = true }
+check('ctx 没有 slots 时不抛异常（客户端半侧绝不拖垮界面）', !threw)
+
+threw = false
+try { mod.apply({ slots: { inject() { throw new Error('boom') } } }) } catch { threw = true }
+check('slots.inject 抛异常时被吞掉', !threw)
+
+threw = false
+try { mod.apply({ inject(names, cb) { check('ctx.inject 声明的依赖 = ["slots"]', Array.isArray(names) && names[0] === 'slots', JSON.stringify(names)); cb({ slots: { inject(n, fn) { return fn() }, register() { return { dispose() {} } } } }) } }) } catch { threw = true }
+check('有 ctx.inject 时走动态注入路径且不抛异常', !threw)
 
 /* ── 真渲染面板 ──────────────────────────────────────────────────────────── */
 function walk(node, out = []) {
